@@ -87,13 +87,8 @@ This tool scans for inefficiencies in synthetic options pricing near expiration.
 
 Mispricings often emerge between 2–4 PM ET on expiration day due to execution errors: counterparties sometimes fail to cancel in-the-money options or mistakenly exercise out-of-the-money ones. These behavioral mistakes create small but statistically exploitable edges.
 
-This scanner identifies those edges by comparing synthetic prices to spot, simulating profitability from assignment drift. It is not a trading system, but a research and signal-exploration tool built for educational purposes. I selected a few tickers from stocks, commodities, and ETFs, though any other ticker may be added and scanned as well.
+This scanner identifies those edges by comparing synthetic prices to spot, simulating profitability from assignment drift. It is not a trading system, but a research and signal-exploration tool built for educational purposes. I selected a few tickers from stocks, commodities, and ETFs, though any other ticker may be added in the code and scanned as well.
 """)
-
-st.markdown(
-    '[View Source on GitHub](https://github.com/farazhakim/options-edge-scanner)',
-    unsafe_allow_html=True
-)
 
 st.info("Data is sourced from Yahoo Finance via the yfinance Python package.")
 
@@ -140,6 +135,11 @@ for i in range(0, len(tickers), cols_per_row):
 # ----- Footer -----
 st.markdown("---")
 st.caption("For educational and demonstration purposes only. Not investment advice.")
+
+st.markdown(
+    '[View Source on GitHub](https://github.com/farazhkpineapple/options-edge-scanner)',
+    unsafe_allow_html=True
+)
 
 
 

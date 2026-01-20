@@ -9,12 +9,7 @@ import numpy as np
 import time
 import random
 
-# Configure yfinance session with headers to reduce rate limiting
-import requests
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-})
+# No need to configure session - yfinance handles it internally with curl_cffi
 
 # ----- Logger for Mispricings -----
 def log_mispricings(df, symbol, threshold=0.05, log_path="mispricing_log.csv"):
@@ -78,8 +73,8 @@ def fetch_chain_data(symbol):
             else:
                 time.sleep(random.uniform(2, 4))
 
-            # Use session with headers
-            tk = yf.Ticker(symbol, session=session)
+            # Let yfinance handle session internally
+            tk = yf.Ticker(symbol)
 
             # Fetch with timeout
             expiries = tk.options

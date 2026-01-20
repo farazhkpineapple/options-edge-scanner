@@ -63,42 +63,50 @@ def log_mispricings(df, symbol, threshold=0.05, log_path="mispricing_log.csv"):
         df_filtered.to_csv(log_path, mode='a', header=not os.path.exists(log_path), index=False)
 
 # ----- Option Chain Fetcher with Rate Limit Handling -----
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def fetch_chain(symbol):
-    max_retries = 3
-    retry_delay = 2
+@st.cache_data(ttl=300, show_spinner=False)  # Cache for 5 minutes
+def fetch_chain_data(symbol):
+    """Fetch data without UI elements (cacheable)"""
+    max_retries = 5
+    base_delay = 3
 
     for attempt in range(max_retries):
         try:
-            # Add random delay to avoid rate limiting
-            time.sleep(random.uniform(1, 3))
+            # Progressive delays: longer waits on retry
+            if attempt > 0:
+                wait_time = base_delay * (2 ** attempt) + random.uniform(2, 5)
+                time.sleep(wait_time)
+            else:
+                time.sleep(random.uniform(2, 4))
 
-            tk = yf.Ticker(symbol)
+            # Use session with headers
+            tk = yf.Ticker(symbol, session=session)
+
+            # Fetch with timeout
             expiries = tk.options
-            rows = []
+            if not expiries or len(expiries) == 0:
+                return None, None, "No expiries available"
 
             try:
-                underlying_price = tk.history(period='1d')['Close'].iloc[-1]
+                hist = tk.history(period='1d')
+                if hist.empty:
+                    return None, None, f"No price data available for {symbol}"
+                underlying_price = hist['Close'].iloc[-1]
             except Exception as e:
-                st.warning(f"Could not fetch price for {symbol}: {str(e)}")
-                return pd.DataFrame()
+                return None, None, f"Could not fetch price: {str(e)}"
 
-            # Display spot price and expiries compactly on one line
-            expiry_str = " | ".join(expiries[:3]) if len(expiries) > 0 else "No expiries available"
-            st.markdown(f"**{symbol} Spot Price:** ${underlying_price:.2f} | **Expiries:** {expiry_str}")
+            rows = []
+            expiry_list = list(expiries[:3])
 
-            for exp in expiries[:3]:
+            for exp in expiry_list:
                 try:
-                    time.sleep(random.uniform(0.5, 1.5))  # Delay between expiry requests
+                    time.sleep(random.uniform(1, 2))
                     chain = tk.option_chain(exp)
                     calls = chain.calls.set_index('strike')
                     puts = chain.puts.set_index('strike')
                 except Exception as e:
-                    st.warning(f"Could not fetch option chain for {symbol} expiry {exp}: {str(e)}")
                     continue
 
                 common_strikes = calls.index.intersection(puts.index)
-                # Filter strikes within ±10% of current price for performance
                 strikes = [s for s in common_strikes if 0.9 * underlying_price <= s <= 1.1 * underlying_price]
 
                 for strike in strikes:
@@ -110,7 +118,6 @@ def fetch_chain(symbol):
                     synthetic_price = mid_call - mid_put + strike
                     edge = underlying_price - synthetic_price
 
-                    # Yahoo Finance options URL for this expiry and strike
                     exp_timestamp = int(pd.Timestamp(exp).timestamp())
                     yfinance_url = f"https://finance.yahoo.com/quote/{symbol}/options?date={exp_timestamp}"
 
@@ -125,25 +132,40 @@ def fetch_chain(symbol):
                         'option_link': yfinance_url
                     })
 
-            df = pd.DataFrame(rows)
-            if df.empty:
-                return df
-            return df.sort_values(by='edge', key=abs, ascending=False)
+            if not rows:
+                return underlying_price, expiry_list, None
+
+            df = pd.DataFrame(rows).sort_values(by='edge', key=abs, ascending=False)
+            return underlying_price, expiry_list, df
 
         except Exception as e:
-            if "rate limit" in str(e).lower() or "YFRateLimitError" in str(type(e).__name__):
+            error_msg = str(e)
+            if "rate limit" in error_msg.lower() or "YFRateLimitError" in str(type(e).__name__):
                 if attempt < max_retries - 1:
-                    wait_time = retry_delay * (2 ** attempt) + random.uniform(1, 3)
-                    st.warning(f"Rate limit hit for {symbol}. Retrying in {wait_time:.1f}s... (Attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
+                    continue
                 else:
-                    st.error(f"Failed to fetch data for {symbol} after {max_retries} attempts. Please try again later.")
-                    return pd.DataFrame()
+                    return None, None, f"Rate limit exceeded after {max_retries} attempts. Data is cached and will refresh in 5 minutes."
             else:
-                st.error(f"Error fetching data for {symbol}: {str(e)}")
-                return pd.DataFrame()
+                return None, None, f"Error: {error_msg}"
 
-    return pd.DataFrame()
+    return None, None, "Failed to fetch data"
+
+def fetch_chain(symbol):
+    """Wrapper with UI elements"""
+    underlying_price, expiries, result = fetch_chain_data(symbol)
+
+    if underlying_price is not None and expiries is not None:
+        expiry_str = " | ".join(expiries)
+        st.markdown(f"**{symbol} Spot Price:** ${underlying_price:.2f} | **Expiries:** {expiry_str}")
+
+    if isinstance(result, str):  # Error message
+        st.warning(result)
+        return pd.DataFrame()
+    elif result is None:
+        st.warning(f"No option data available for {symbol}")
+        return pd.DataFrame()
+    else:
+        return result
 
 # ----- Ticker Names Map -----
 ticker_names = {
@@ -315,16 +337,26 @@ with st.expander("📊 Click to view Chart and Distribution Insights", expanded=
 st.markdown("---")
 st.markdown("### Next Section Overview:")
 st.markdown("""
-The scanner pulls live Yahoo Finance options data for each ticker and uses put-call parity to calculate synthetic stock prices: 
+The scanner pulls live Yahoo Finance options data for each ticker and uses put-call parity to calculate synthetic stock prices:
 
-`Synthetic = Call Mid - Put Mid + Strike`. 
+`Synthetic = Call Mid - Put Mid + Strike`.
 
 It then compares this to the actual stock price to find mispricings (edges).
 
-Positive edges indicate the stock trades above its synthetic price, while negative edges suggest the opposite. 
-            
+Positive edges indicate the stock trades above its synthetic price, while negative edges suggest the opposite.
+
 The left tables show live data ranked by largest edges, and the right tables show historical mispricings logged when edges exceed $0.10.
 """)
+
+# ----- Add Manual Refresh Button -----
+st.markdown("---")
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    if st.button("🔄 Scan All Tickers for Mispricings", type="primary", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+st.info("⏱️ Data is cached for 5 minutes to avoid rate limits. Click the button above to refresh.")
 
 # ----- Auto-run Scan for All Tickers -----
 
